@@ -203,10 +203,10 @@ return $count;
                 for a species but also optionally filters for the 
                 first portion of Human Y which is a non-informative region
                 (composed solely of N's). The code will only filter for 
-                GRCh38 forcing the developer to update the test for other 
+                GRCh37 forcing the developer to update the test for other 
                 regions. 
   Returntype  : ArrayRef[Bio::EnsEMBL::Slice] 
-  Exceptions  : Thrown if you are filtering Human but also are not on GRCh38
+  Exceptions  : Thrown if you are filtering Human but also are not on GRCh37
 
 =cut
 sub get_Slices {
@@ -223,14 +223,14 @@ sub get_Slices {
        if($production_name eq 'homo_sapiens') {
        # Coord system with highest rank should always be the one, apart from VEGA databases where it would be the second highest
        my ($cs, $alternative_cs) = @{$dba->get_CoordSystem()->fetch_all()};
-       my $expected = 'GRCh38';
+       my $expected = 'GRCh37';
 
        if($cs->version() ne $expected && $alternative_cs->version() ne $expected) {
           throw sprintf(q{Cannot continue as %s's coordinate system %s is not the expected %s }, $production_name, $cs->version(), $expected);
        }
 
        @slices = grep {
-         if($_->seq_region_name() eq 'Y' && ($_->end() < 2781480 || $_->start() > 56887902)) {
+         if($_->seq_region_name() eq 'Y' && ($_->end() < 2649521)) {
            $self->info('Filtering small Y slice');
            0;
          }
