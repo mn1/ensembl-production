@@ -87,8 +87,7 @@ sub run {
                       JOIN coord_system c USING (coord_system_id)
                       WHERE x.external_db_id=1000
                       AND c.species_id=?
-          AND (a.logic_name="goa_import"
-          OR a.logic_name="interpro2go")';
+          AND a.logic_name="goa_import"';
 
         # Same deletes but for GOs mapped to transcripts
         my $sql_delete_3 = 'DELETE ox.*,onx.*,dx.*  FROM xref x
@@ -114,8 +113,7 @@ sub run {
                       JOIN coord_system c USING (coord_system_id)
                       WHERE x.external_db_id=1000
                       AND c.species_id=?
-                      AND (a.logic_name="goa_import"
-                      OR a.logic_name="interpro2go")';
+                      AND a.logic_name="goa_import"';
         my $dba          = $reg->get_DBAdaptor($species, "core");
         my $sth_1        = $dba->dbc->prepare($sql_delete_1);
         my $sth_2        = $dba->dbc->prepare($sql_delete_2);
@@ -152,6 +150,21 @@ sub run {
     my %unmatched_rnacentral;
     my ($is_protein, $is_transcript);
 
+   # Retrieve existing or create new analysis object
+   my $analysis_adaptor = Bio::EnsEMBL::Registry->get_adaptor($species , "core", "analysis" );
+   my $analysis = $analysis_adaptor->fetch_by_logic_name('goa_import');
+   
+    if(!defined $analysis){
+      $analysis = Bio::EnsEMBL::Analysis->
+        new( -logic_name      => 'goa_import',
+             -db              => 'GO',
+             -db_version      => '',
+             -program         => 'goa_import',
+             -description     => 'Gene Ontology xrefs data from GOA',
+             -display_label   => 'GO xrefs from GOA',
+          );
+    }
+    
     while (<FILE>) {
       chomp $_;
       next if $_ =~ /^!/;
@@ -226,20 +239,6 @@ sub run {
     	-dbname      => 'GO'
    ); 
 
-   # Retrieve existing or create new analysis object
-   my $analysis_adaptor = Bio::EnsEMBL::Registry->get_adaptor($species , "core", "analysis" );
-   my $analysis = $analysis_adaptor->fetch_by_logic_name('goa_import');
-   
-   if(!defined $analysis){
-     $analysis = Bio::EnsEMBL::Analysis->
-        new( -logic_name      => 'goa_import',
-             -db              => 'GO',
-             -db_version      => '',
-             -program         => 'goa_import',
-             -description     => 'Gene Ontology xrefs data from GOA',
-             -display_label   => 'GO xrefs from GOA',
-          );
-   }
    $go_xref->analysis($analysis);
 
    # There could technically be more than one xref with the same display_label
