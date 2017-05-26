@@ -34,7 +34,7 @@ use Bio::EnsEMBL::Analysis;
 use Bio::EnsEMBL::Registry;
 use Bio::EnsEMBL::Utils::SqlHelper;
 use Bio::EnsEMBL::Utils::Exception qw(throw);
-use base ('Bio::EnsEMBL::Hive::Process');
+use base ('Bio::EnsEMBL::Production::Pipeline::Common::Base');
 
 sub param_defaults {
     return {
@@ -51,12 +51,14 @@ return 0;
 sub run {
     my ($self)  = @_;
 
+    $self->hive_dbc()->disconnect_when_inactive();
+
     my $reg  = 'Bio::EnsEMBL::Registry';
 
     # Parse filename to get $target_species
     my $file    = $self->param_required('gpad_file');
     my $species = $1 if($file=~/annotations_ensembl.*\-(.+)\.gpa/);
-
+    my $dba          = $reg->get_DBAdaptor($species, "core");
     # Remove existing projected GO annotations from GOA
     if ($self->param_required('delete_existing')) {
          # Delete by xref.info_type='PROJECTION' OR 'DEPENDENT'
@@ -114,7 +116,6 @@ sub run {
                       WHERE x.external_db_id=1000
                       AND c.species_id=?
                       AND a.logic_name="goa_import"';
-        my $dba          = $reg->get_DBAdaptor($species, "core");
         my $sth_1        = $dba->dbc->prepare($sql_delete_1);
         my $sth_2        = $dba->dbc->prepare($sql_delete_2);
         my $sth_3        = $dba->dbc->prepare($sql_delete_3);
@@ -128,8 +129,9 @@ sub run {
         $sth_2->finish();
         $sth_3->finish();
         $sth_4->finish();
-        $dba->dbc->disconnect_if_idle();
-    }
+
+       }
+    $self->hive_dbc()->disconnect_if_idle();
 
     my $odba = $reg->get_adaptor('multi', 'ontology', 'OntologyTerm');
     my $gos  = $self->fetch_ontology($odba);
@@ -164,6 +166,32 @@ sub run {
              -display_label   => 'GO xrefs from GOA',
           );
     }
+
+    # fetch all uniprots
+    my $uniprot_dbentries = {};
+    $dba->dbc()->sql_helper()->execute_no_return(
+						 -SQL=>"select xref_id,dbprimary_acc,version,display_label,xref.description as description,info_type,info_text,db_name,db_display_name from xref "
+                                                         ."join external_db using (external_db_id) where db_name in ('Uniprot/SWISSPROT','Uniprot/SPTREMBL')",
+						 -USE_HASHREFS=>1,
+						 -CALLBACK=>sub {
+						   my ($row) = @_;
+						   my $dbe = Bio::EnsEMBL::DBEntry->new(
+											-adaptor => $dba->get_DBEntryAdaptor(),
+											-dbid => $row->{xref_id},
+											-primary_id => $row->{dbprimary_acc},
+											-version => $row->{version},
+											-dbname  => $row->{dbname},
+											-display_id => $row->{display_label},
+											-description => $row->{description},
+											-db_display_name => $row->{db_display_name},
+											-info_type => $row->{info_type},
+											-info_text => $row->{info_text});						     
+						   push @{$uniprot_dbentries->{$row->{dbprimary_acc}}}, $dbe;
+						   return;
+						 }
+						);
+
+
     
     while (<FILE>) {
       chomp $_;
@@ -193,14 +221,14 @@ sub run {
              $tgt_feature =~ s/tgt_transcript=//;
              $tgt_transcript = $tgt_feature;
          } else {
-             $self->warning("Error parsing $annotation_properties, no match for $tgt_feature\n");
+             warn("Error parsing $annotation_properties, no match for $tgt_feature\n");
          }
       }
 
      if ($adaptor_hash{$tgt_species}) {
         # If the file lists a species not in the current registry, skip it
         if ($adaptor_hash{$tgt_species} eq 'undefined') { 
-	   $self->warning("Could not find $tgt_species in registry\n");
+	   warn("Could not find $tgt_species in registry\n");
            next; 
         }
     	$tl_adaptor  = $adaptor_hash{$tgt_species};
@@ -246,15 +274,12 @@ sub run {
    # Distinguish if data is UniProt (proteins) or RNACentral (transcripts)
    if ($db =~ /UniProt/) {
       $is_protein = 1;
-      my $uniprot_xrefs = $dbe_adaptor->fetch_all_by_name($db_object_id, 'Uniprot/SWISSPROT');
-      if (!$uniprot_xrefs) {
-        $uniprot_xrefs = $dbe_adaptor->fetch_all_by_name($db_object_id, 'Uniprot/SPTREMBL');
-      }
+      my $uniprot_xrefs = $uniprot_dbentries->{$db_object_id};
       if ($uniprot_xrefs) {
         $master_xref = $uniprot_xrefs->[0];
         $go_xref->add_linkage_type($go_evidence, $master_xref);
        } else {
-        $unmatched_uniprot{$tgt_species}++;
+	 $unmatched_uniprot{$tgt_species}++;
        }
     } elsif ($db =~ /RNAcentral/) {
       $is_transcript = 1;
